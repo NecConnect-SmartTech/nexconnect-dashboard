@@ -112,7 +112,7 @@ export default async function DashboardPage() {
         `https://go.nexconnectst.ca/api/dashboard-summary?owner_email=${encodeURIComponent(OWNER_EMAIL)}`,
         { cache: "no-store" }
       ),
-      fetch(`https://go.nexconnectst.ca/api/taps`, { cache: "no-store" }),
+      fetch(`https://go.nexconnectst.ca/api/taps?owner_email=${encodeURIComponent(OWNER_EMAIL)}`, { cache: "no-store" }),
     ])
 
     summaryData = await summaryRes.json()
