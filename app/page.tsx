@@ -5,86 +5,155 @@ import { DevicesTable, Device } from "@/components/dashboard/devices-table"
 import { AnalyticsChart } from "@/components/dashboard/analytics-chart"
 import { PlanCards } from "@/components/dashboard/plan-cards"
 
-// Mock data
-const kpiData = {
-  totalDevices: 3,
-  totalTaps: 1247,
-  lastTap: "2 min ago",
-  activeDevices: 2,
+const OWNER_EMAIL = "jason@nexconnectst.ca"
+
+type DashboardSummaryResponse = {
+  success: boolean
+  customer?: {
+    email: string
+    plan: string
+  }
+  summary?: {
+    total_devices: number
+    total_taps: number
+    last_tap_at: string | null
+    active_devices: number
+  }
+  devices?: Array<{
+    device_id: string
+    device_name: string | null
+    platform: string | null
+    product_type: string | null
+    color: string | null
+    status: string | null
+    tap_count: number
+    last_tap_at: string | null
+  }>
+  error?: string
 }
 
-const devices: Device[] = [
-  {
-    id: "1",
-    name: "Business Card Pro",
-    deviceId: "NXC-8A2F-K9D3",
-    productType: "Card",
-    platform: "iOS",
-    status: "active",
-    totalTaps: 892,
-    lastTap: "2 min ago",
-  },
-  {
-    id: "2",
-    name: "Store Display Tag",
-    deviceId: "NXC-3B7E-M4P1",
-    productType: "Tag",
-    platform: "Android",
-    status: "active",
-    totalTaps: 341,
-    lastTap: "1 hour ago",
-  },
-  {
-    id: "3",
-    name: "Event Badge",
-    deviceId: "NXC-5C1D-N6Q8",
-    productType: "Badge",
-    platform: "Cross-platform",
-    status: "inactive",
-    totalTaps: 14,
-    lastTap: "3 days ago",
-  },
-]
+type TapsResponse = {
+  success: boolean
+  taps?: Array<{
+    id: number
+    device_id: string
+    tapped_at: string
+  }>
+  error?: string
+}
 
-const chartData = [
-  { date: "Feb 12", taps: 45 },
-  { date: "Feb 13", taps: 52 },
-  { date: "Feb 14", taps: 38 },
-  { date: "Feb 15", taps: 65 },
-  { date: "Feb 16", taps: 42 },
-  { date: "Feb 17", taps: 58 },
-  { date: "Feb 18", taps: 73 },
-  { date: "Feb 19", taps: 49 },
-  { date: "Feb 20", taps: 62 },
-  { date: "Feb 21", taps: 55 },
-  { date: "Feb 22", taps: 71 },
-  { date: "Feb 23", taps: 48 },
-  { date: "Feb 24", taps: 67 },
-  { date: "Feb 25", taps: 59 },
-  { date: "Feb 26", taps: 82 },
-  { date: "Feb 27", taps: 64 },
-  { date: "Feb 28", taps: 76 },
-  { date: "Mar 1", taps: 53 },
-  { date: "Mar 2", taps: 69 },
-  { date: "Mar 3", taps: 88 },
-  { date: "Mar 4", taps: 72 },
-  { date: "Mar 5", taps: 61 },
-  { date: "Mar 6", taps: 79 },
-  { date: "Mar 7", taps: 54 },
-  { date: "Mar 8", taps: 68 },
-  { date: "Mar 9", taps: 85 },
-  { date: "Mar 10", taps: 77 },
-  { date: "Mar 11", taps: 63 },
-  { date: "Mar 12", taps: 91 },
-  { date: "Mar 13", taps: 74 },
-]
+function formatLastTap(value: string | null) {
+  if (!value) return "—"
 
-export default function DashboardPage() {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+
+  const diffMs = Date.now() - date.getTime()
+  const diffMin = Math.floor(diffMs / 60000)
+  const diffHour = Math.floor(diffMs / 3600000)
+  const diffDay = Math.floor(diffMs / 86400000)
+
+  if (diffMin < 1) return "Just now"
+  if (diffMin < 60) return `${diffMin} min ago`
+  if (diffHour < 24) return `${diffHour} hour${diffHour === 1 ? "" : "s"} ago`
+  if (diffDay < 30) return `${diffDay} day${diffDay === 1 ? "" : "s"} ago`
+
+  return date.toLocaleDateString()
+}
+
+function formatStatus(status: string | null) {
+  if (!status) return "inactive"
+  if (status.toLowerCase() === "activated") return "active"
+  return status.toLowerCase()
+}
+
+function buildChartData(
+  taps: Array<{ tapped_at: string }> = []
+): Array<{ date: string; taps: number }> {
+  const counts = new Map<string, number>()
+
+  for (const tap of taps) {
+    const d = new Date(tap.tapped_at)
+    if (Number.isNaN(d.getTime())) continue
+
+    const key = d.toISOString().slice(0, 10)
+    counts.set(key, (counts.get(key) || 0) + 1)
+  }
+
+  const result: Array<{ date: string; taps: number }> = []
+  const today = new Date()
+
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(today)
+    d.setDate(today.getDate() - i)
+
+    const key = d.toISOString().slice(0, 10)
+    const label = d.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    })
+
+    result.push({
+      date: label,
+      taps: counts.get(key) || 0,
+    })
+  }
+
+  return result
+}
+
+export default async function DashboardPage() {
+  let summaryData: DashboardSummaryResponse | null = null
+  let tapsData: TapsResponse | null = null
+
+  try {
+    const [summaryRes, tapsRes] = await Promise.all([
+      fetch(
+        `https://go.nexconnectst.ca/api/dashboard-summary?owner_email=${encodeURIComponent(OWNER_EMAIL)}`,
+        { cache: "no-store" }
+      ),
+      fetch(`https://go.nexconnectst.ca/api/taps`, { cache: "no-store" }),
+    ])
+
+    summaryData = await summaryRes.json()
+    tapsData = await tapsRes.json()
+  } catch (error) {
+    console.error("Dashboard fetch failed:", error)
+  }
+
+  const plan = summaryData?.customer?.plan || "free"
+  const summary = summaryData?.summary || {
+    total_devices: 0,
+    total_taps: 0,
+    last_tap_at: null,
+    active_devices: 0,
+  }
+
+  const kpiData = {
+    totalDevices: summary.total_devices,
+    totalTaps: summary.total_taps,
+    lastTap: formatLastTap(summary.last_tap_at),
+    activeDevices: summary.active_devices,
+  }
+
+  const devices: Device[] = (summaryData?.devices || []).map((device, index) => ({
+    id: String(index + 1),
+    name: device.device_name || device.device_id,
+    deviceId: device.device_id,
+    productType: device.product_type || "—",
+    platform: device.platform || "—",
+    status: formatStatus(device.status) as "active" | "inactive",
+    totalTaps: Number(device.tap_count || 0),
+    lastTap: formatLastTap(device.last_tap_at),
+  }))
+
+  const chartData = buildChartData(tapsData?.taps || [])
+
   return (
     <div className="min-h-screen bg-background">
       <DashboardSidebar />
       <div className="pl-64">
-        <DashboardHeader customerName="Jason" plan="free" />
+        <DashboardHeader customerName="Jason" plan={plan} />
         <main className="p-6">
           <div className="mb-8">
             <h1 className="text-2xl font-bold text-foreground">Welcome back, Jason</h1>
@@ -97,7 +166,7 @@ export default function DashboardPage() {
             <KPICards data={kpiData} />
             <DevicesTable devices={devices} />
             <AnalyticsChart data={chartData} />
-            <PlanCards currentPlan="free" />
+            <PlanCards currentPlan={plan} />
           </div>
         </main>
       </div>
